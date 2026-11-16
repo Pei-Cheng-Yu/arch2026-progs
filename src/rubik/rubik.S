@@ -308,38 +308,246 @@ heuristic:
 heuristic_ret:
     ret
     
+#input: a0 keys, a1 count, a2 key
+find_key:
+    li t0, 0 # low
+    mv t1, a1  # high
+find_key_loop:
+    bgeu t0, t1, ret_find_key
+    sub t2, t1, t0
+    srli t2, t2, 1
+    add t2, t0, t2 # mid
+    slli t3, t2, 2   #byte offset = mid*4
+    add  t3, a0, t3  #addr of keys[mid]
+    lw   t4, 0(t3)   # t4 = keys[mid]
+    bgeu t4, a2, update_high
+
+    addi t0, t2, 1
+    j find_key_loop
+update_high:
+    mv t1, t2
+    j find_key_loop
+ret_find_key:
+    bgeu t0, a1, find_key_missing
+    slli t3, t0, 2
+    add t3, a0, t3
+    lw t4, 0(t3)
+
+    bne t4, a2, find_key_missing
+    mv a0, t0
+    ret
+find_key_missing:
+    li a0, -1
+    ret
+
+#input: a0 moves, a1 index
+get_move:
+    srli t0, a1, 1
+    add  t0, a0, t0
+    lbu  t0, 0(t0)
+    andi t1, a1, 1
+    slli t1, t1, 2
+
+    srl  a0, t0, t1
+    andi a0, a0, 15
+    ret
+
+#input: a0 p rank, a1, o rank, a2 moveID
+move_ranked:
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
+
+    sltiu t0, a2, 3 #t0 = (move <3)
+    xori t0, t0 ,1  #t0 = (move>=3)
+
+    sltiu t1, a2, 6
+    xori t1, t1, 1
+    add s0, t0, t1
+
+    slli t0, s0, 1
+    add t0, t0 ,s0
+    sub s1, a2, t0
+    addi s1, s1, 1
+
+move_ranked_loop:
+    mv a2, s0
+    jal ra, move_quarter
+
+    addi s1, s1, -1
+    bnez s1, move_ranked_loop
+
+    lw s1, 4(sp)
+    lw s0, 8(sp)
+    lw ra, 12(sp)
+    addi sp, sp, 16
+    ret
+#input a0 p, a1 o, a2 index, a3 desti, return a0 tail or -1
+finish_five:
+    addi sp, sp, -32
+    sw ra, 28(sp)
+    sw s0, 24(sp)
+    sw s1, 20(sp)
+    sw s2, 16(sp)
+    sw s3, 12(sp)
+    sw s4, 8(sp)
+
+    mv s0, a0   #p_rank
+    mv s1, a1   #o_rank
+    mv s2, a2   #index
+    mv s3, a3   #next des byle
+    li s4, 0    #tail length
+
+finish_loop:
+    or t0, s0, s1 
+    beqz t0, finish_done #p==0 and o==0:end
+    bltz s2, finish_fail # index < 0?
+    li t0, 5
+    bgeu s4, t0, finish_fail # length >= 5?
+    
+    la a0, rubik_five_moves
+    mv a1, s2
+    jal ra, get_move    #move in a0
+
+    li t0, 9
+    bgeu a0, t0, finish_fail
+
+#dst[length++] = move;
+    sb a0, 0(s3)
+    addi s3, s3, 1
+    addi s4, s4, 1
+#apply_move_ranked(&p, &o, move);
+    mv a2, a0
+    mv a0, s0
+    mv a1, s1
+    jal ra, move_ranked
+    mv s0, a0
+    mv s1, a1
+
+    or t0, s0, s1
+    beqz t0, finish_done
+#index = find_key(rubik_five_keys,RUBIK_FIVE_COUNT,make_key(p, o));
+    slli a2, s0, 10
+    or a2, a2, s1
+    la a0, rubik_five_keys
+    li a1, 12224
+    jal ra, find_key
+    mv s2, a0
+    j finish_loop
+
+finish_done:
+    mv a0, s4
+    j finish_return
+
+finish_fail:
+    li a0, -1
+
+finish_return:
+    lw s4, 8(sp)
+    lw s3, 12(sp)
+    lw s2, 16(sp)
+    lw s1, 20(sp)
+    lw s0, 24(sp)
+    lw ra, 28(sp)
+    addi sp, sp, 32
+    ret
     
 #input: a0 p, a1 o, a2 addr of solution array
 solve_ida:
     addi sp, sp, -32
     addi sp, sp, -96 # 12 frames x 8b each frame (0:p, 2:o, 4: next move, 5: previous face, 6: incomming move, 7: h
-    
+
     sw ra, 116(sp)
     sw s0, 112(sp)
     sw s1, 108(sp)
     sw s2, 104(sp)
     sw s3, 100(sp)
-    sw s4, 96(sp)
-    
-    
+    sw s4, 96(sp)    
+    sw s5, 120(sp)
+   
+    mv s3, a2 #addr solve array
+    li s5, 0 #prefix_len
     sh a0, 0(sp)
     sh a1, 2(sp) #save start p, o
-    jal ra, heuristic
-    sb a0, 7(sp) # save start h
     li t0, 3
     sb t0, 5(sp)
     li t0, 0
-    sb t0, 4(sp)
-    sb t0, 6(sp) #init other field
+    sb zero, 4(sp)
+    sb zero, 6(sp)
     mv s1, a0 # s1 as bound (threshold)
     
-    mv s3, a2 #addr solve array
+#try with-in five search
+    slli a2, a0, 10
+    or a2, a2, a1 #make key
+    
+    la a0, rubik_five_keys
+    li a1, 12224
+    jal ra, find_key
+    bltz a0, ida_try_eleven
+
+    mv a2, a0  #Match table index
+    lhu a0, 0(sp)
+    lhu a1, 2(sp)
+    mv a3, s3
+    jal ra, finish_five
+    j clean_up
+
+ida_try_eleven:
+    lhu t0, 0(sp)
+    lhu t1, 2(sp)
+    slli a2, t0, 10
+    or a2, a2, t1
+    la a0, rubik_eleven_keys
+    la a1, 2644
+    jal ra, find_key
+    bltz a0, ida_set_bound
+    
+    mv a1, a0
+    la a0, rubik_eleven_moves
+    jal ra, get_move
+    li t0, 9
+    bgeu a0, t0, ida_return_neg
+
+    sb a0, 0(s3)    #solution[0]=move
+    li s5, 1    #prefix_len =1
+
+    sltiu t0, a0, 3
+    xori t0, t0, 1
+    sltiu t1, a0, 6
+    xori t1, t1, 1
+    add t0, t0 , t1
+    sb t0, 5(sp)    #root_face
+
+    mv a2, a0
+    lhu a0, 0(sp)
+    lhu a1, 2(sp)
+    jal ra, move_ranked
+    sh a0, 0(sp)
+    sh a1, 2(sp)
+
+ida_set_bound:
+    lhu a0, 0(sp)
+    lhu a1, 2(sp)
+    jal ra, heuristic
+    sb a0, 7(sp)
+
+    bnez s5, ida_bound_ten
+    mv s1, a0
+    li t0, 6
+    bgeu s1, t0, solve_ida_loop
+    li s1, 6
+    j solve_ida_loop
+ida_bound_ten:
+    li s1, 10
+
 solve_ida_loop:
     li s2, -1 # next bound
     li s0, 0 #depth
     mv s4, sp
     sb zero, 4(s4)
     li t0, 11 #MAX_DEPTH
+    sub t0, t0, s5 #MAX_DEPTH - prefix_len
     blt t0, s1, ida_return_neg
     
 solve_ida_inner_loop:
@@ -353,7 +561,28 @@ solve_ida_inner_loop:
     add t1, t1, t2 # p+o>=0 (usigned)
     beq t1, zero, ida_done # if(p==0&o==0) load solution
     
+    sub t1, s1, s0
+    addi t1, t1, -5
+    bnez t1, ida_not_five_step
+
+    lhu t0, 0(s4)   #cur p 
+    lhu t1, 2(s4)   #cur O
+#form key
+    slli a2, t0, 10 
+    or a2, a2, t1
+
+    la a0, rubik_five_keys
+    li a1, 12224
+    jal ra, find_key
+
+    bgez a0, ida_table_hit
+
+    addi t1, s0, 6  #no hit -> need at least six move
+    j check_next_bound
+ida_not_five_step:
+
     li t1, 11 #MAX_DEPTH
+    sub t1, t1, s5
     beq s0, t1, next_inner
     
 after_new_frame:
@@ -429,12 +658,18 @@ ida_inner_done:
     mv s1, s2
     j solve_ida_loop
     
+ida_table_hit:
+    sw a0, 124(sp)  #save the matched five-move-table index
+    j ida_copy_path
 ida_done: 
-    # load solution
+    li t0, -1
+    sw t0, 124(sp)
+ida_copy_path:
     li t0, 1 #i=1
-    
+
 load_sol_loop: #s3 addr
     addi t1, t0, -1
+    add  t1, t1, s5 # prefix_len + i - 1
     blt s0, t0, load_sol_done
     add t2, s3, t1
     slli t3, t0, 3
@@ -445,12 +680,29 @@ load_sol_loop: #s3 addr
     j load_sol_loop
     
 load_sol_done:
-    mv a0, s0
+    lw a2, 124(sp)  #the  saved table index
+    bltz a2, ida_no_tail
+#call finish_five
+    lhu a0, 0(s4)   #p
+    lhu a1, 2(s4)   #o
+    add a3, s3, s5
+    add a3, a3, s0  #solution + prefix_len + depth
+    jal ra, finish_five
+    bltz a0, ida_return_neg
+
+    add a0, a0, s0
+    add a0, a0, s5  #prefix_len + depth + tail
     j clean_up
+
+ida_no_tail:
+    add a0, s0, s5 #depth + prefix_len
+    j clean_up
+
 ida_return_neg:
     li a0, -1
     
 clean_up:
+    lw s5, 120(sp)
     lw ra, 116(sp)
     lw s0, 112(sp)
     lw s1, 108(sp)

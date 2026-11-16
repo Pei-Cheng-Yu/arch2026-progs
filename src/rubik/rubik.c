@@ -1,5 +1,6 @@
 #include "rubik.h"
-
+#include "eleven_data.h"
+#include "five_data.h"
 #include "moves_data.h"
 #include "separate_pdb_data.h"
 
@@ -159,23 +160,114 @@ static uint8_t heuristic(uint16_t p, uint16_t o)
     uint8_t ho = orientation_distances[o];
     return hp > ho ? hp : ho;
 }
+static uint32_t make_key(uint16_t p, uint16_t o)
+{
+    return ((uint32_t) p << 10) | o;
+}
 
+/* Return the matching entry index, or -1 if absent. */
+static int find_key(const uint32_t *keys, unsigned count, uint32_t key)
+{
+    unsigned low = 0, high = count;
+
+    while (low < high) {
+        unsigned mid = low + ((high - low) >> 1);
+
+        if (keys[mid] < key)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+
+    return low < count && keys[low] == key ? (int) low : -1;
+}
+
+static uint8_t get_move(const uint8_t *moves, unsigned index)
+{
+    return (uint8_t) ((moves[index >> 1] >> ((index & 1U) << 2)) & 15U);
+}
+
+static void apply_move_ranked(uint16_t *p, uint16_t *o, uint8_t move)
+{
+    uint8_t face = (uint8_t) ((move >= 3U) + (move >= 6U));
+    unsigned turns = move - ((face << 1) + face) + 1U;
+
+    for (unsigned i = 0; i < turns; ++i) {
+        *p = permutation[face][*p];
+        *o = orientation[face][*o];
+    }
+}
+
+/* Write at most five move IDs into dst.
+ * p/o are local copies, so search-frame ranks remain intact.
+ */
+static int finish_five(uint16_t p, uint16_t o, int index, uint8_t *dst)
+{
+    unsigned length = 0;
+
+    while (p != 0 || o != 0) {
+        if (index < 0 || length == 5)
+            return -1;
+
+        uint8_t move = get_move(rubik_five_moves, (unsigned) index);
+        if (move >= MOVES)
+            return -1;
+
+        dst[length++] = move;
+        apply_move_ranked(&p, &o, move);
+
+        if (p != 0 || o != 0)
+            index = find_key(rubik_five_keys, RUBIK_FIVE_COUNT, make_key(p, o));
+    }
+
+    return (int) length;
+}
 static int solve_ida(uint16_t start_p,
                      uint16_t start_o,
                      uint8_t solution[MAX_DEPTH])
 {
+    unsigned prefix_len = 0;
+    unsigned root_face = NO_FACE;
+
+    /* 1. Can the five table solve the starting state directly? */
+    uint32_t key = make_key(start_p, start_o);
+    int index = find_key(rubik_five_keys, RUBIK_FIVE_COUNT, key);
+
+    if (index >= 0)
+        return finish_five(start_p, start_o, index, solution);
+
+    /* 2. A distance-eleven state gets one optimal move first. */
+    index = find_key(rubik_eleven_keys, RUBIK_ELEVEN_COUNT, key);
+
+    if (index >= 0) {
+        uint8_t move = get_move(rubik_eleven_moves, (unsigned) index);
+
+        if (move >= MOVES)
+            return -1;
+
+        solution[0] = move;
+        prefix_len = 1;
+
+        apply_move_ranked(&start_p, &start_o, move);
+
+        /* Avoid immediately turning the same face again. */
+        root_face = (uint8_t) ((move >= 3U) + (move >= 6U));
+    }
+
+    /* depth and bound exclude the optional shortcut move. */
     uint8_t start_h = heuristic(start_p, start_o);
-    unsigned bound = start_h;
-    while (bound <= MAX_DEPTH) {
+    unsigned bound = prefix_len ? 10U : (start_h < 6U ? 6U : start_h);
+    while (bound <= MAX_DEPTH - prefix_len) {
         unsigned next_bound = UINT32_MAX;
         unsigned depth = 0;
-        frames[0] = (frame_t) {start_p, start_o, 0, NO_FACE, 0, start_h};
+        frames[0] = (frame_t) {start_p, start_o, 0, root_face, 0, start_h};
 
         for (;;) {
             frame_t *current = &frames[depth];
             /* Check a new frame once; resumed parents select their next move.
              */
             if (current->next_move == 0) {
+                /* 3. Keep the existing PDB heuristic pruning. */
                 unsigned f = depth + current->h;
                 if (f > bound) {
                     if (f < next_bound)
@@ -188,17 +280,52 @@ static int solve_ida(uint16_t start_p,
 
                 if (current->p == 0 && current->o == 0) {
                     for (unsigned i = 1; i <= depth; ++i)
-                        solution[i - 1] = frames[i].incoming_move;
-                    return (int) depth;
+                        solution[prefix_len + i - 1] = frames[i].incoming_move;
+                    return (int) (prefix_len + depth);
                 }
 
-                /* No child frame exists beyond MAX_DEPTH. */
-                if (depth == MAX_DEPTH) {
+                /* 4. Let the table handle the remaining five moves. */
+                if (bound - depth == 5U) {
+                    index = find_key(rubik_five_keys, RUBIK_FIVE_COUNT,
+                                     make_key(current->p, current->o));
+
+                    if (index >= 0) {
+                        /* Copy the IDA* path after the shortcut. */
+                        for (unsigned i = 1; i <= depth; ++i)
+                            solution[prefix_len + i - 1] =
+                                frames[i].incoming_move;
+
+                        /* Append the tail after the IDA* path. */
+                        int tail = finish_five(current->p, current->o, index,
+                                               solution + prefix_len + depth);
+
+                        if (tail < 0)
+                            return -1;
+
+                        return (int) (prefix_len + depth) + tail;
+                    }
+
+                    /* Missing from the table means at least six
+                     * moves remain, so this branch cannot fit.
+                     */
+                    unsigned candidate = depth + 6U;
+
+                    if (candidate < next_bound)
+                        next_bound = candidate;
+
+                    if (depth == 0)
+                        break;
+
+                    --depth;
+                    continue;
+                }
+
+                if (depth == MAX_DEPTH - prefix_len) {
                     --depth;
                     continue;
                 }
             }
-
+            /* 5. Existing move selection and child generation. */
             if (current->next_move == MOVES) {
                 if (depth == 0)
                     break;
@@ -216,7 +343,7 @@ static int solve_ida(uint16_t start_p,
             uint8_t remainder = (uint8_t) (move - ((face << 1) + face));
 
             frame_t *child = &frames[depth + 1];
-            /* R2/R' continue from the preceding sibling's coordinates. */
+            /* R2/R' continue from the preceding sibling's ranks. */
             uint16_t p = remainder == 0 ? current->p : child->p;
             uint16_t o = remainder == 0 ? current->o : child->o;
             p = permutation[face][p];
@@ -288,6 +415,8 @@ int rubik_solve(const char *state, char *out, size_t cap)
     rank_components(&parsed_state, &p, &o);
     uint8_t solution[MAX_DEPTH];
     int length = solve_ida(p, o, solution);
+    if (length < 0)
+        return length;
     size_t needed = 1;
     for (int i = 0; i < length; ++i) {
         if (i > 0)

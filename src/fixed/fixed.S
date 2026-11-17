@@ -40,7 +40,12 @@ op2_asm:
     .type   op3_asm, @function
     .align  2
 op3_asm:
-    li      a0, 0
+    srli t1, a0, 1
+    and a0, a0, a1
+    srli a1, a1, 1
+    add t1, t1, a1
+    andi a0, a0, 1
+    add a0, t1, a0
     ret
     .size   op3_asm, .-op3_asm
 
@@ -48,6 +53,57 @@ op3_asm:
     .type   q_mul_asm, @function
     .align  2
 q_mul_asm:
-    li      a0, 0
+    xor t0, a0, a1
+    srli t0, t0, 31 #sign diff
+
+    bge a0, zero, q_mul_ua_done
+    sub a0, zero, a0
+q_mul_ua_done:
+    bge a1, zero, q_mul_ub_done
+    sub a1, zero, a1
+q_mul_ub_done:
+# uint64_t product
+    li t1, 0    #low
+    li t2, 0
+# uint64_t shifted=ua
+    mv t3, a0   #low
+    li t4, 0
+
+q_mul_loop:
+    beqz a1, q_mul_loop_done
+    andi t5, a1, 1
+    beqz t5, q_mul_shift
+
+q_mul_add_shift:
+    add t5, t1, t3
+    sltu t6, t5, t1 #carry?
+    add t2, t2, t4
+    add t2, t2, t6
+    mv t1, t5
+q_mul_shift:
+    srli t5, t3, 31
+    slli t4, t4, 1
+    or t4, t4, t5   #from low to high?
+    slli t3, t3, 1 #shifted<<=1
+
+    srli a1, a1, 1
+    j q_mul_loop
+q_mul_loop_done:
+    beqz t0, q_mul_round
+    not t1, t1
+    not t2, t2
+    addi t1, t1, 1
+    seqz t5, t1
+    add t2, t2 ,t5
+q_mul_round:
+    li t5, 0x80000
+    add t6, t1, t5
+    sltu t5, t6, t1 #carry?
+    add t2, t2, t5
+    mv t1, t6
+
+    srli    t1, t1, 20
+    slli    t2, t2, 12
+    or      a0, t1, t2
     ret
     .size   q_mul_asm, .-q_mul_asm

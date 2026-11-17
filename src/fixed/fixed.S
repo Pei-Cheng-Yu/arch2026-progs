@@ -68,18 +68,16 @@ q_mul_ub_done:
 # uint64_t shifted=ua
     mv t3, a0   #low
     li t4, 0
-
-q_mul_loop:
     beqz a1, q_mul_loop_done
+q_mul_loop:
     andi t5, a1, 1
     beqz t5, q_mul_shift
 
 q_mul_add_shift:
-    add t5, t1, t3
-    sltu t6, t5, t1 #carry?
-    add t2, t2, t4
-    add t2, t2, t6
-    mv t1, t5
+    add  t1, t1, t3
+    sltu t6, t1, t3 #carry?
+    add  t2, t2, t4
+    add  t2, t2, t6
 q_mul_shift:
     srli t5, t3, 31
     slli t4, t4, 1
@@ -87,7 +85,7 @@ q_mul_shift:
     slli t3, t3, 1 #shifted<<=1
 
     srli a1, a1, 1
-    j q_mul_loop
+    bnez a1, q_mul_loop
 q_mul_loop_done:
     beqz t0, q_mul_round
     not t1, t1

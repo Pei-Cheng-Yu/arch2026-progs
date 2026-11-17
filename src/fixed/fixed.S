@@ -15,14 +15,14 @@
     .type   op1_asm, @function
     .align  2
 op1_asm:
-    li t0, 0 
-op1_loop:
+    li t0, 0
     beqz a1, op1_return
+op1_loop:
     and t1, a0, a1
     xor a0, a0, a1
     slli a1, t1, 1
     addi t0, t0, 1
-    j op1_loop
+    bnez a1, op1_loop
 op1_return:
     sw  t0, 0(a2)
     ret

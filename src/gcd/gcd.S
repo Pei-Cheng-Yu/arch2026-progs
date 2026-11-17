@@ -24,6 +24,7 @@ gcd_u32_loop:
     beqz t2, gcd_b_even
     bltu a1, a0, gcd_a_bigger
     sub a1, a1, a0
+    srli a1, a1, 1
     j gcd_u32_loop
 gcd_ab_even:
     srli a0, a0, 1
@@ -41,6 +42,7 @@ gcd_b_even:
 
 gcd_a_bigger:
     sub a0, a0, a1
+    srli a0, a0, 1  #a must be even after sub (odd-odd)
     j gcd_u32_loop
 
 gcd_u32_return_b:

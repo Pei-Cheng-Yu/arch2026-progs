@@ -34,21 +34,26 @@ int32_t q_mul(int32_t a, int32_t b)
 
     if (b < 0)
         ub = 0u - ub;
-    uint64_t product = 0;
-    uint64_t shifted = ua;
+    uint32_t product_lo = 0, product_hi = 0;
+    uint32_t shifted_lo = ua, shifted_hi = 0;
 
     while (ub != 0) {
-        if (ub & 1u)
-            product += shifted;
-
-        shifted <<= 1;
+        if (ub & 1u) {
+            uint32_t old_lo = product_lo;
+            product_lo += shifted_lo;
+            product_hi += shifted_hi + (product_lo < old_lo);
+        }
+        shifted_hi = (shifted_hi << 1) | (shifted_lo >> 31);
+        shifted_lo <<= 1;
         ub >>= 1;
     }
-    int64_t signed_product = (int64_t) product;
 
-    if ((a < 0) != (b < 0))
-        signed_product = -signed_product;
-    signed_product += INT64_C(1) << 19;
-    signed_product >>= 20;
-    return (int32_t) signed_product;
+    if ((a < 0) != (b < 0)) {
+        product_hi = ~product_hi + (product_lo == 0);
+        product_lo = 0u - product_lo;
+    }
+    uint32_t old_lo = product_lo;
+    product_lo += UINT32_C(1) << 19;
+    product_hi += product_lo < old_lo;
+    return (int32_t) ((product_hi << 12) | (product_lo >> 20));
 }

@@ -277,15 +277,18 @@ rank_o_loop:
 move_quarter: 
     la t0, permutation_moves
     la t1, orientation_moves
-    mv t2, a2
-    li t3, 10080              #5040 permutaition per face, each occupied 2 byte
-    li t4, 1458               #720 orientation per face, each 2 btye
-move_select_row:
-    beq t2, zero, move_read
+    beqz a2, move_read  #face 0: first row
+
+    li t3, 10080  #5040 permutations x 2 bytes
+    li t4, 1458  #729 orientations x 2 bytes
     add t0, t0, t3
     add t1, t1, t4
-    addi t2, t2, -1
-    j move_select_row
+
+    li t2, 1
+    beq a2, t2, move_read  #face 1: second row
+
+    add t0, t0, t3  #face 2: third row
+    add t1, t1, t4
 move_read:
     slli t2, a0, 1 # rank -> index
     add t0, t0, t2
@@ -314,9 +317,8 @@ find_key:
     mv t1, a1  # high
 find_key_loop:
     bgeu t0, t1, ret_find_key
-    sub t2, t1, t0
-    srli t2, t2, 1
-    add t2, t0, t2 # mid
+    add t2, t0, t1  #low+high
+    srli t2, t2, 1  #mid
     slli t3, t2, 2   #byte offset = mid*4
     add  t3, a0, t3  #addr of keys[mid]
     lw   t4, 0(t3)   # t4 = keys[mid]

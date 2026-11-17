@@ -18,8 +18,6 @@ gcd_u32_loop:
     beq a0, a1, gcd_u32_return
     andi t1, a0, 1
     andi t2, a1, 1
-    add t3, t1, t2
-    beqz t3, gcd_ab_even
     beqz t1, gcd_a_even
     beqz t2, gcd_b_even
     bltu a1, a0, gcd_a_bigger
@@ -33,6 +31,7 @@ gcd_ab_even:
     j gcd_u32_loop
 
 gcd_a_even:
+    beqz t2, gcd_ab_even
     srli a0, a0, 1
     j gcd_u32_loop
 

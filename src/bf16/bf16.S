@@ -165,6 +165,113 @@ bf16_mul_invalid:
     .align  2
 
 bf16_sqrt_asm:
-    li      a0, 0
+    srli a1, a0, 7
+    andi a1, a1, 0xFF
+    andi a2, a0, 0x7F
+
+    li t0, 255
+    beq a1, t0, bf16_sqrt_special
+
+#check zero before negative
+    li t0, 0x7FFF  #mag_mask
+    and t0, a0, t0
+    beqz t0, bf16_sqrt_zero
+
+    srli t0, a0, 15  #sign
+    bnez t0, bf16_sqrt_nan
+    beqz a1, bf16_sqrt_zero  #positive subnormal
+
+    ori a2, a2, 128  #hidden_bit
+    addi a3, a1, -127  #e=exp-bias
+
+    andi t0, a3, 1  #check odd exponent
+    beqz t0, bf16_sqrt_even
+    slli a2, a2, 1  #mant*=2
+    addi a3, a3, -1  #e--
+bf16_sqrt_even:
+    srai a3, a3, 1  #e/2
+    addi a3, a3, 127  #result_exp=e/2+bias
+
+    li a4, 90  #low
+    li a5, 256  #high
+    li a6, 128  #result
+
+bf16_sqrt_search:
+    bltu a5, a4, bf16_sqrt_normalize  #low>high
+    add a7, a4, a5
+    srli a7, a7, 1  #mid=(low+high)/2
+
+#mid*mid
+    li t0, 0  #product
+    mv t1, a7  #shifted
+    mv t2, a7  #multiplier
+
+bf16_sqrt_square_loop:
+    andi t3, t2, 1  #check lowest bit
+    beqz t3, bf16_sqrt_square_shift  #skip add if zero
+    add t0, t0, t1
+
+bf16_sqrt_square_shift:
+    slli t1, t1, 1
+    srli t2, t2, 1
+    bnez t2, bf16_sqrt_square_loop
+
+    srli t0, t0, 7  #(mid*mid)/128
+    bltu a2, t0, bf16_sqrt_too_high  #square>mant
+
+    mv a6, a7  #result=mid
+    addi a4, a7, 1  #low=mid+1
+    j bf16_sqrt_search
+
+bf16_sqrt_too_high:
+    addi a5, a7, -1  #high=mid-1
+    j bf16_sqrt_search
+
+bf16_sqrt_normalize:
+    li t0, 256
+
+bf16_sqrt_shift_right:
+    bltu a6, t0, bf16_sqrt_check_low
+    srli a6, a6, 1  #result>>=1
+    addi a3, a3, 1  #result_exp++
+    j bf16_sqrt_shift_right
+
+bf16_sqrt_check_low:
+    li t0, 128  #hidden_bit
+
+bf16_sqrt_shift_left:
+    bgeu a6, t0, bf16_sqrt_pack
+    slli a6, a6, 1  #result<<=1
+    addi a3, a3, -1  #result_exp--
+    j bf16_sqrt_shift_left
+
+bf16_sqrt_pack:
+    li t0, 255
+    bge a3, t0, bf16_sqrt_inf
+    bge zero, a3, bf16_sqrt_zero  #result_exp<=0
+
+    slli a3, a3, 7
+    andi a6, a6, 0x7F  #remove hidden bit
+    or a0, a3, a6
+    ret
+
+bf16_sqrt_special:
+    bnez a2, bf16_sqrt_return  #return NaN unchanged
+    srli t0, a0, 15
+    bnez t0, bf16_sqrt_nan  #negative infinity
+
+bf16_sqrt_return:
+    ret
+
+bf16_sqrt_nan:
+    li a0, 0x7FC0
+    ret
+
+bf16_sqrt_zero:
+    li a0, 0
+    ret
+
+bf16_sqrt_inf:
+    li a0, 0x7F80
     ret
     .size   bf16_sqrt_asm, .-bf16_sqrt_asm

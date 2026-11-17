@@ -101,6 +101,69 @@ uint16_t bf16_mul(uint16_t a, uint16_t b)
 
 uint16_t bf16_sqrt(uint16_t a)
 {
-    (void) a;
-    return 0;
+    uint32_t sign = a & BF16_SIGN_MASK;
+    int32_t exp = (a >> 7) & 0xFFu;
+    uint32_t mant = a & BF16_MANT_MASK;
+
+    /* Preserve NaN; handle infinity. */
+    if (exp == 0xFF) {
+        if (mant != 0)
+            return a;
+        return sign ? BF16_NAN : a;
+    }
+
+    if ((a & BF16_MAG_MASK) == 0)
+        return 0;
+
+    if (sign != 0)
+        return BF16_NAN;
+
+    if (exp == 0)
+        return 0;
+
+    /* Restore the significand and obtain the actual exponent. */
+    mant |= BF16_HIDDEN_BIT;
+    int32_t e = exp - BF16_EXP_BIAS;
+
+    if (e & 1) {
+        mant <<= 1;
+        e--;
+    }
+
+    int32_t result_exp = e / 2 + BF16_EXP_BIAS;
+
+    /* Find the largest mid whose truncated square fits. */
+    uint32_t low = 90, high = 256, result = 128;
+
+    while (low <= high) {
+        uint32_t mid = (low + high) >> 1;
+        uint32_t square = (mid * mid) >> 7;
+
+        if (square <= mant) {
+            result = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+
+    /* Normalization*/
+    while (result >= 256u) {
+        result >>= 1;
+        result_exp++;
+    }
+
+    while (result < BF16_HIDDEN_BIT) {
+        result <<= 1;
+        result_exp--;
+    }
+
+    if (result_exp >= 0xFF)
+        return BF16_INF;
+
+    if (result_exp <= 0)
+        return 0;
+
+    return (uint16_t) (((uint32_t) result_exp << 7) |
+                       (result & BF16_MANT_MASK));
 }

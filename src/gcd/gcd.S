@@ -14,42 +14,45 @@ gcd_u32_asm:
     beq a0, x0, gcd_u32_return_b
     beq a1, x0, gcd_u32_return_a
     li t0, 0
-gcd_u32_loop:
-    beq a0, a1, gcd_u32_return
-    andi t1, a0, 1
-    andi t2, a1, 1
-    beqz t1, gcd_a_even
-    beqz t2, gcd_b_even
-    bltu a1, a0, gcd_a_bigger
-    sub a1, a1, a0
-    srli a1, a1, 1
-    j gcd_u32_loop
 gcd_ab_even:
+    or   t1, a0, a1
+    andi t1, t1, 1
+    bnez t1, gcd_strip_a
+
     srli a0, a0, 1
     srli a1, a1, 1
     addi t0, t0, 1
-    j gcd_u32_loop
-
-gcd_a_even:
-    beqz t2, gcd_ab_even
+    j gcd_ab_even
+gcd_strip_a:
+    andi t1, a0, 1
+    bnez t1, gcd_u32_loop
     srli a0, a0, 1
-    j gcd_u32_loop
-
-gcd_b_even:
+    j gcd_strip_a
+gcd_u32_loop:
+    andi t1, a1, 1
+    bnez t1, gcd_compare
     srli a1, a1, 1
     j gcd_u32_loop
 
-gcd_a_bigger:
-    sub a0, a0, a1
-    srli a0, a0, 1  #a must be even after sub (odd-odd)
+gcd_compare:
+    beq a0, a1, gcd_u32_return
+    bltu a0, a1, gcd_subtract
+    mv t1, a0
+    mv a0, a1
+    mv a1, t1
+
+gcd_subtract:
+    sub a1, a1, a0
+    srli a1, a1, 1
     j gcd_u32_loop
 
+gcd_u32_return:
+    sll a0, a0, t0
+    ret
 gcd_u32_return_b:
     mv a0, a1
     ret
+
 gcd_u32_return_a:
-    ret
-gcd_u32_return:
-    sll a0, a0, t0
     ret
     .size   gcd_u32_asm, .-gcd_u32_asm

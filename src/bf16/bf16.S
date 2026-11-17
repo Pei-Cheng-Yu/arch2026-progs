@@ -17,6 +17,8 @@ bf16_from_f32_asm:
     andi t0, t0, 0xFF
     li t1, 0xFF
     beq t0, t1, bf16_from_f32_return
+    slli t1, a0, 16  #discarded bits
+    bge t1, zero, bf16_from_f32_return  #less than half
     srli t1, a0, 16
     andi t1, t1, 1
     li   t0, 0x7FFF
